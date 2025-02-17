@@ -2,6 +2,14 @@
 
 Code for ReF Decompile: Relabeling and Function Call Enhanced Decompile
 
+## Deploy
+
+```base
+python merge.py --output-dir ReF-Decompile
+vllm serve ReF-Decompile --port 8000 --enable-auto-tool-choice --tool-call-parser mistral
+python eval.py --base_url http://127.0.0.1:8000/v1
+```
+
 ## Results
 
 <table class="table">

@@ -1,0 +1,59 @@
+### model
+model_name_or_path: LLM4Binary/llm4decompile-6.7b-v1.5
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 32
+lora_alpha: 64
+loraplus_lr_ratio: 16
+use_rslora: true
+lora_target: q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj
+additional_target: embed_tokens,lm_head
+new_special_tokens: "[AVAILABLE_TOOLS],[/AVAILABLE_TOOLS],[INST],[/INST],[TOOL_CALLS],[TOOL_RESULTS],[/TOOL_RESULTS]"
+
+flash_attn: fa2
+enable_liger_kernel: true
+max_grad_norm: 1.0
+neftune_noise_alpha: 5
+upcast_layernorm: true
+
+### ddp
+ddp_timeout: 180000000
+deepspeed: deepspeed/ds_z2_config.json
+
+### dataset
+dataset_dir: data
+dataset: ReF-Decompile
+packing: true
+flat_packing: true
+template: mistral
+cutoff_len: 4096
+overwrite_cache: false
+preprocessing_num_workers: 16
+
+### output
+output_dir: ReF-Decompile-lora
+logging_steps: 1
+save_steps: 100
+plot_loss: true
+overwrite_output_dir: false
+report_to: all
+run_name: ReF-Decompile-lora
+
+### train
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 1
+learning_rate: 2.0e-5
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_steps: 20
+bf16: true
+pure_bf16: true
+
+### eval
+val_size: 0.05
+per_device_eval_batch_size: 16
+evaluation_strategy: steps
+eval_steps: 50
