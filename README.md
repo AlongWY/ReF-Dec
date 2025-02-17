@@ -5,11 +5,6 @@ Code for ReF Decompile: Relabeling and Function Call Enhanced Decompile
 
 + [ReF-Decompile](https://huggingface.co/ylfeng/ReF-Decompile-lora)
 
-
-## Evaluation
-
-todo
-
 ## Results
 
 <table class="table">
@@ -57,3 +52,8 @@ todo
     </tr>
 </table>
 
+
+## Resources
+
++ [Code](https://github.com/AlongWY/ReF-Dec)
++ [Model](https://huggingface.co/ylfeng/ReF-Decompile-lora)
