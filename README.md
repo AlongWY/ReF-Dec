@@ -46,12 +46,17 @@ python eval.py --base_url http://127.0.0.1:8000/v1
         <td>4.07</td><td>3.46</td><td>3.40</td><td>3.23</td><td>3.54</td>
     </tr>
     <tr>
-        <td><a href="https://huggingface.co/ylfeng/sccdec-lora">FAE Decompile</a></td>
+        <td><a href="https://github.com/AlongWY/sccdec">FAE Decompile</a></td>
         <td>67.68</td><td>48.78</td><td>45.73</td><td>42.07</td><td>51.07</td>
         <td>3.94</td><td>3.46</td><td>3.40</td><td>3.25</td><td>3.51</td>
     </tr>
     <tr>
-        <td><a href="https://huggingface.co/ylfeng/ReF-Decompile-lora">ReF Decompile</a></td>
+        <td><a href="https://github.com/AlongWY/sccdec">FAE Decompile+SCC</a></td>
+        <td>70.24</td><td>48.54</td><td>47.56</td><td>43.29</td><td>52.41</td>
+        <td>3.97</td><td>3.48</td><td>3.41</td><td>3.23</td><td>3.52</td>
+    </tr>
+    <tr>
+        <td><a href="https://github.com/AlongWY/ReF-Dec">ReF Decompile</a></td>
         <td>85.37</td><td>56.10</td><td>51.83</td><td>52.43</td><td>61.43</td>
         <td>4.13</td><td>3.60</td><td>3.54</td><td>3.49</td><td>3.69</td>
     </tr>
