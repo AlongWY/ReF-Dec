@@ -1,10 +1,6 @@
 # ReF-Decompile
 Code for ReF Decompile: Relabeling and Function Call Enhanced Decompile
 
-## Model
-
-+ [ReF-Decompile](https://huggingface.co/ylfeng/ReF-Decompile-lora)
-
 ## Results
 
 <table class="table">
