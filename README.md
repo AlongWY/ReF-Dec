@@ -35,13 +35,13 @@ python eval.py --base_url http://127.0.0.1:8000/v1
         <td>2.82</td><td>2.35</td><td>2.29</td><td>2.31</td><td>2.44</td>
     </tr>
     <tr>
-        <td><a href="https://huggingface.co/LLM4Binary/llm4decompile-6.7b-v2">LLM4Decompile-Ref</a></td>
+        <td><a href="https://github.com/albertan017/LLM4Decompile">LLM4Decompile-Ref</a></td>
         <td>74.39</td><td>46.95</td><td>47.56</td><td>42.07</td><td>52.74</td>
         <td>4.08</td><td>3.38</td><td>3.34</td><td>3.19</td><td>3.50</td>
     </tr>
     <tr style="text-align: center;"><td colspan="11"><strong>End-to-End Method</strong></td></tr>
     <tr>
-        <td><a href="https://huggingface.co/LLM4Binary/llm4decompile-6.7b-v1.5">LLM4Decompile-End</a></td>
+        <td><a href="https://github.com/albertan017/LLM4Decompile">LLM4Decompile-End</a></td>
         <td>69.51</td><td>44.51</td><td>39.63</td><td>38.41</td><td>48.02</td>
         <td>4.07</td><td>3.46</td><td>3.40</td><td>3.23</td><td>3.54</td>
     </tr>
