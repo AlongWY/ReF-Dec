@@ -68,3 +68,17 @@ python eval.py --base_url http://127.0.0.1:8000/v1
 + [Code](https://github.com/AlongWY/ReF-Dec)
 + [Model](https://huggingface.co/ylfeng/ReF-Decompile-lora)
 + [Paper](https://arxiv.org/abs/2502.12221)
+
+## Reference
+
+```bibtex
+@misc{feng2025refdecompilerelabelingfunction,
+      title={ReF Decompile: Relabeling and Function Call Enhanced Decompile}, 
+      author={Yunlong Feng and Bohan Li and Xiaoming Shi and Qingfu Zhu and Wanxiang Che},
+      year={2025},
+      eprint={2502.12221},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2502.12221}, 
+}
+```
