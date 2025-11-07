@@ -5,8 +5,7 @@ Code for [ReF Decompile: Relabeling and Function Call Enhanced Decompile](https:
 ## Deploy
 
 ```bash
-python eval/merge.py --output-dir ReF-Decompile
-vllm serve ReF-Decompile --port 8000 --enable-auto-tool-choice --tool-call-parser mistral
+vllm serve ylfeng/ReF-Decompile --port 8000 --enable-auto-tool-choice --tool-call-parser mistral
 python eval/eval.py --base_url http://127.0.0.1:8000/v1
 ```
 

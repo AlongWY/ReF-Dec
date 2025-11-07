@@ -79,8 +79,8 @@ TEMPLATE = r"""
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--base-model", type=str, default="LLM4Binary/llm4decompile-6.7b-v1.5")
-    parser.add_argument("--peft-path", type=str, default="ylfeng/ReF-Decompile-lora")
+    parser.add_argument("--base-model", type=str, default="/home/share/models/llm4decompile-6.7b-v1.5")
+    parser.add_argument("--peft-path", type=str, default="/home/share/models/ReF-Decompile-lora")
     parser.add_argument("--output-dir", type=str, default="ReF-Decompile")
     args = parser.parse_args()
 
@@ -89,7 +89,7 @@ def main():
         tokenizer.chat_template = TEMPLATE
         tokenizer.additional_special_tokens = None
         base_model = AutoModelForCausalLM.from_pretrained(
-            args.base_model, torch_dtype=torch.bfloat16, device_map="auto"
+            args.base_model, dtype=torch.bfloat16, device_map="auto"
         ).eval()
 
         # resize the vocabulary

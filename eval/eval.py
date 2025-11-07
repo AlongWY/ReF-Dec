@@ -285,7 +285,7 @@ async def model_decompile(
                     traceback.print_exc()
                     print(data_label, data_type, found, e)
 
-        messages.append({"role": "assistant", "tool_calls": tool_calls})
+        messages.append(chat_completion_resp.choices[0].message.model_dump())
         for item in tool_results:
             messages.append({"role": "tool", "content": item})
 
@@ -303,6 +303,7 @@ async def model_decompile(
     else:
         content = chat_completion_resp.choices[0].message.content
 
+    messages.append({"role": "assistant", "content": content})
     try:
         # regex find last ```c...```
         codes = re.findall(r"```\w*\n(?P<code>.*?)```", content, re.DOTALL)
@@ -370,6 +371,7 @@ async def run_decompile(
             traceback.print_exc()
             return {
                 **item,
+                "messages": messages,
                 "compile": 0,
                 "run": 0,
                 "c_func_decompile": None,
@@ -378,6 +380,7 @@ async def run_decompile(
 
         return {
             **item,
+            "messages": messages,
             "run": flag_run,
             "compile": flag_compile,
             "c_func_decompile": c_func_decompile,
@@ -414,25 +417,36 @@ async def eval_model(
     ]
 
     # Use tqdm to create a progress bar for the asyncio.gather
-    results = []
     pbar = tqdm(
         asyncio.as_completed(tasks),
         total=len(tasks),
         desc=model_tag,
         dynamic_ncols=True,
     )
-    for f in pbar:
-        try:
-            result = await f
-            results.append(result)
+    if result_file:
+        with open(result_file, "w") as f:
+            for item in pbar:
+                try:
+                    result = await item
+                    opt_state = result["type"]
+                    num_compile[opt_state] += result["compile"]
+                    num_run[opt_state] += result["run"]
+                    f.write(json.dumps(result) + "\n")
+                except Exception as e:
+                    raise e
 
-            opt_state = result["type"]
-            num_compile[opt_state] += result["compile"]
-            num_run[opt_state] += result["run"]
-        except Exception as e:
-            raise e
+                pbar.set_postfix(num_run)
+    else:
+        for item in pbar:
+            try:
+                result = await item
+                opt_state = result["type"]
+                num_compile[opt_state] += result["compile"]
+                num_run[opt_state] += result["run"]
+            except Exception as e:
+                raise e
 
-        pbar.set_postfix(num_run)
+            pbar.set_postfix(num_run)
 
     with open(output_file, "a") as f:
         total_run = sum(num_run.values())
@@ -459,10 +473,6 @@ async def eval_model(
 
         f.write(json.dumps(data) + "\n")
 
-    if result_file:
-        with open(result_file, "w") as f:
-            json.dump(results, f, indent=2)
-
 
 async def main():
     parser = argparse.ArgumentParser()
@@ -470,7 +480,7 @@ async def main():
         "--base_url",
         type=str,
         required=False,
-        default="http://127.0.0.1:8000/v1",
+        default="http://gpu07:8081/v1",
     )
     parser.add_argument(
         "--api_key",
@@ -481,13 +491,13 @@ async def main():
     parser.add_argument(
         "--enable-tool",
         action="store_true",
-        default=False,
+        default=True,
         help="Enable tool",
     )
     parser.add_argument(
         "--with-label",
         action="store_true",
-        default=False,
+        default=True,
         help="Use labeled data",
     )
 
