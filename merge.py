@@ -84,7 +84,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default="ReF-Decompile")
     args = parser.parse_args()
 
-    if not os.path.exists(args.output_path):
+    if not os.path.exists(args.output_dir):
         tokenizer = AutoTokenizer.from_pretrained(args.peft_path)
         tokenizer.chat_template = TEMPLATE
         tokenizer.additional_special_tokens = None
