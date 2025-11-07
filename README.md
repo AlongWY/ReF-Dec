@@ -5,16 +5,16 @@ Code for [ReF Decompile: Relabeling and Function Call Enhanced Decompile](https:
 ## Deploy
 
 ```bash
-python merge.py --output-dir ReF-Decompile
+python eval/merge.py --output-dir ReF-Decompile
 vllm serve ReF-Decompile --port 8000 --enable-auto-tool-choice --tool-call-parser mistral
-python eval.py --base_url http://127.0.0.1:8000/v1
+python eval/eval.py --base_url http://127.0.0.1:8000/v1
 ```
 
 ## Build Data
 
 ```bash
-python stage1_compile.py
-python stage2_build.py
+python train/stage1_compile.py
+python train/stage2_build.py
 ```
 
 ## Results
