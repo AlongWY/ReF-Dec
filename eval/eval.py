@@ -5,6 +5,7 @@ import json
 import re
 import struct
 import tempfile
+import time
 from tqdm import tqdm
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
@@ -246,6 +247,7 @@ async def model_decompile(
         **chat_params,
     )
 
+    start_time = time.time()
     if chat_completion_resp.choices[0].message.tool_calls:
         tool_calls = chat_completion_resp.choices[0].message.tool_calls
         tool_results = []
@@ -303,7 +305,15 @@ async def model_decompile(
     else:
         content = chat_completion_resp.choices[0].message.content
 
-    messages.append({"role": "assistant", "content": content})
+    end_time = time.time()
+    messages.append(
+        {
+            "role": "assistant",
+            "content": content,
+            "start_time": start_time,
+            "end_time": end_time,
+        }
+    )
     try:
         # regex find last ```c...```
         codes = re.findall(r"```\w*\n(?P<code>.*?)```", content, re.DOTALL)
@@ -390,7 +400,7 @@ async def run_decompile(
 async def eval_model(
     client,
     data_all,
-    num_semaphore=16,
+    num_semaphore=1024,
     model_name="model",
     model_tag="model",
     output_file="result.jsonl",
@@ -480,7 +490,7 @@ async def main():
         "--base_url",
         type=str,
         required=False,
-        default="http://gpu07:8081/v1",
+        default="http://127.0.0.1:8000/v1",
     )
     parser.add_argument(
         "--api_key",
