@@ -1,9 +1,11 @@
+import os
 import re
 import json
 import argparse
 import struct
 import asyncio
 import subprocess
+import gradio as gr
 from elftools.elf.elffile import ELFFile
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
@@ -296,6 +298,23 @@ async def format_asm(asm, func_name, convert=True):
 
 
 async def extract_function_rodata(elf: ELFFile):
+    functions = []
+    # 尝试从符号表获取函数
+    for section in elf.iter_sections():
+        if section.name == ".symtab":
+            for symbol in section.iter_symbols():
+                if symbol["st_info"]["type"] == "STT_FUNC" and symbol.name:
+                    functions.append(symbol.name)
+            break
+    # 若无符号表，尝试 .dynsym
+    if not functions:
+        for section in elf.iter_sections():
+            if section.name == ".dynsym":
+                for symbol in section.iter_symbols():
+                    if symbol["st_info"]["type"] == "STT_FUNC" and symbol.name:
+                        functions.append(symbol.name)
+                break
+
     # 获取 .rodata 段
     rodata_section = elf.get_section_by_name(".rodata")
     if not rodata_section:
@@ -303,7 +322,7 @@ async def extract_function_rodata(elf: ELFFile):
         return None, None, {}, 0
     rodata_data = rodata_section.data()
     rodata_addr = rodata_section["sh_addr"]
-    return rodata_addr, rodata_data
+    return functions, rodata_addr, rodata_data
 
 
 async def read_data(data_type, data_size, rodata, bias):
@@ -377,13 +396,11 @@ async def model_decompile(
     address_mapping,
     rodata_data,
     rodata_addr,
-    enable_tool=False,
     # model config
     model="model",
     timeout=9999,
     max_tokens=1024,
     temperature=0.01,
-    stream=False,
     client: AsyncOpenAI = None,
     **chat_params,
 ):
@@ -401,14 +418,15 @@ async def model_decompile(
         timeout=timeout,
         max_tokens=max_tokens,
         temperature=temperature,
-        stream=stream,
-        tools=TOOLS if enable_tool else None,
+        stream=False,
+        tools=TOOLS,
         **chat_params,
     )
 
+    rodata_request = None
+    tool_results = []
     if chat_completion_resp.choices[0].message.tool_calls:
         tool_calls = chat_completion_resp.choices[0].message.tool_calls
-        tool_results = []
         for tool in tool_calls:
             function = tool.function
             arguments = json.loads(function.arguments)
@@ -439,13 +457,13 @@ async def model_decompile(
                         data_label, parsed_data_type, parsed_data_size, value
                     )
                     tool_results.append(result)
-                    print(data_label, data_type, found)
                 except Exception as e:
                     import traceback
 
                     traceback.print_exc()
                     print(data_label, data_type, found, e)
 
+        rodata_request = chat_completion_resp.choices[0].message.model_dump()
         messages.append(chat_completion_resp.choices[0].message.model_dump())
         for item in tool_results:
             messages.append({"role": "tool", "content": item})
@@ -456,8 +474,8 @@ async def model_decompile(
             timeout=timeout,
             max_tokens=max_tokens,
             temperature=temperature,
-            stream=stream,
-            tools=TOOLS if enable_tool else None,
+            stream=False,
+            tools=TOOLS,
             **chat_params,
         )
         content = chat_completion_resp.choices[0].message.content
@@ -473,11 +491,9 @@ async def model_decompile(
     try:
         # regex find last ```c...```
         codes = re.findall(r"```\w*\n(?P<code>.*?)```", content, re.DOTALL)
-        return codes[-1] if codes else content
+        return (codes[-1] if codes else content), rodata_request, tool_results
     except Exception as e:
-        return content
-
-    return content
+        return content, rodata_request, tool_results
 
 
 async def main():
@@ -494,14 +510,9 @@ async def main():
         required=False,
         default="None",
     )
-    parser.add_argument(
-        "--enable-tool",
-        action="store_true",
-        default=True,
-        help="Enable tool",
-    )
-
+    parser.add_argument("--model_name", type=str, default="ref-dec")
     args = parser.parse_args()
+
     client = AsyncOpenAI(base_url=args.base_url, api_key=args.api_key)
     model_list = await client.models.list()
     model_name = model_list.data[0].id
@@ -509,27 +520,204 @@ async def main():
     binary_file = "lib.so"
     function_name = "func0"
 
+    with open(binary_file, "rb") as f:
+        elf = ELFFile(f)
+        # 获取所有的函数名
+        functions, rodata_addr, rodata_data = await extract_function_rodata(elf)
+
     raw_asm = await disassemble(binary_file, function_name)
     assembly, address_mapping = await format_asm(raw_asm, function_name)
 
-    with open(binary_file, "rb") as f:
-        elf = ELFFile(f)
-        rodata_addr, rodata_data = await extract_function_rodata(elf)
-
-    c_func_decompile = await model_decompile(
+    c_func_decompile,_, _ = await model_decompile(
         assembly=assembly,
         address_mapping=address_mapping,
         rodata_data=rodata_data,
         rodata_addr=rodata_addr,
-        enable_tool=args.enable_tool,
+        # 其他设置
         client=client,
         model=model_name,
         temperature=0.0,
     )
 
+    print("--------------")
     print(assembly)
+    print("--------------")
     print(c_func_decompile)
 
 
+# ========== 1. 启动时解析 ELF（同步，仅一次） ==========
+def parse_elf_at_startup(binary_path: str):
+    if not os.path.isfile(binary_path):
+        raise FileNotFoundError(f"Binary not found: {binary_path}")
+
+    functions = []
+    rodata_addr = None
+    rodata_data = b""
+
+    with open(binary_path, "rb") as f:
+        elf = ELFFile(f)
+        # Extract functions
+        for sec in elf.iter_sections():
+            if sec.name == ".symtab":
+                for sym in sec.iter_symbols():
+                    if sym["st_info"]["type"] == "STT_FUNC" and sym.name:
+                        functions.append(sym.name)
+                break
+        if not functions:
+            for sec in elf.iter_sections():
+                if sec.name == ".dynsym":
+                    for sym in sec.iter_symbols():
+                        if sym["st_info"]["type"] == "STT_FUNC" and sym.name:
+                            functions.append(sym.name)
+                    break
+        # Extract .rodata
+        ro_sec = elf.get_section_by_name(".rodata")
+        if ro_sec:
+            rodata_addr = ro_sec["sh_addr"]
+            rodata_data = ro_sec.data()
+
+    functions = sorted(set(f for f in functions if f))
+    return functions or ["<No functions>"], rodata_addr, rodata_data
+
+
+# ========== 2. 异步获取模型列表（供 Gradio 直接调用） ==========
+async def fetch_models(base_url: str, api_key: str):
+    """
+    Gradio 可直接使用此 async 函数
+    返回 Dropdown 更新对象
+    """
+    try:
+        client = AsyncOpenAI(
+            base_url=base_url.strip() or None,
+            api_key=api_key.strip()
+            if api_key.strip() and api_key != "None"
+            else "None",
+        )
+        model_list = await client.models.list()
+        models = [m.id for m in model_list.data]
+        if not models:
+            return gr.Dropdown(
+                choices=["<No models>"], value="<No models>", interactive=False
+            )
+        return gr.Dropdown(choices=models, value=models[0], interactive=True)
+    except Exception as e:
+        return gr.Dropdown(
+            choices=[f"<Error: {type(e).__name__}>"],
+            value=f"<Error: {type(e).__name__}>",
+            interactive=False,
+        )
+
+
+# ========== 3. 异步反编译（Gradio 直接调用） ==========
+async def decompile_selected_function(
+    selected_function: str,
+    base_url: str,
+    api_key: str,
+    selected_model: str,
+    temperature: float,
+    binary_path: str,
+    rodata_addr,
+    rodata_data,
+):
+    try:
+        client = AsyncOpenAI(
+            base_url=base_url.strip() or None,
+            api_key=api_key.strip()
+            if api_key.strip() and api_key != "None"
+            else "None",
+        )
+        raw_asm = await disassemble(binary_path, selected_function)
+        assembly, addr_map = await format_asm(raw_asm, selected_function)
+        c_code, rodata_req, rodata = await model_decompile(
+            assembly=assembly,
+            address_mapping=addr_map,
+            rodata_data=rodata_data,
+            rodata_addr=rodata_addr,
+            client=client,
+            model=selected_model,
+            temperature=temperature,
+        )
+        return raw_asm, assembly, rodata_req, "\n".join(rodata), c_code
+    except Exception as e:
+        err = f"Decompile Error: {e}"
+        return err, err, err, err, err
+
+
+# ========== 4. 创建 Gradio App（使用闭包绑定预解析数据） ==========
+def create_gradio_app(binary_path: str, functions, rodata_addr, rodata_data):
+    async def _decompile(fn, base_url, api_key, model, temp):
+        return await decompile_selected_function(
+            fn, base_url, api_key, model, temp, binary_path, rodata_addr, rodata_data
+        )
+
+    with gr.Blocks(title=f"REF Decompiler: {os.path.basename(binary_path)}") as demo:
+        gr.Markdown(f"# ReF Decompiler\n**Binary**: `{binary_path}`")
+
+        with gr.Sidebar():
+            base_url = gr.Textbox(
+                value="http://gpu07:8081/v1",
+                label="LLM Base URL",
+                placeholder="e.g., http://localhost:1234/v1",
+            )
+            api_key = gr.Textbox(label="API Key", type="password", value="None")
+            model_dropdown = gr.Dropdown(
+                label="Model",
+                choices=["<Set Base URL>"],
+                value="<Set Base URL>",
+                interactive=False,
+            )
+            temperature = gr.Slider(0.0, 1.0, value=0.0, step=0.1, label="Temperature")
+            func_dropdown = gr.Dropdown(
+                label="Function",
+                choices=functions,
+                value=functions[0],
+                interactive=True,
+            )
+            decompile_btn = gr.Button("Decompile", variant="primary")
+
+        with gr.Row():
+            asm_input = gr.Code(
+                label="Assembly", language="markdown", lines=10, max_lines=20
+            )
+            c_output = gr.Code(
+                label="Decompiled C", language="c", lines=10, max_lines=20
+            )
+
+        with gr.Row():
+            raw_asm_input = gr.Code(
+                label="Raw Assembly", language="markdown", lines=10, max_lines=20
+            )
+            with gr.Column():
+                rodata_request = gr.JSON(label="Func Call")
+                rodata_parsed = gr.Textbox(label="Rodata", lines=10, max_lines=20)
+
+        # ✅ 直接传入 async 函数给 change 事件
+        base_url.change(
+            fn=fetch_models, inputs=[base_url, api_key], outputs=model_dropdown
+        )
+        api_key.change(
+            fn=fetch_models, inputs=[base_url, api_key], outputs=model_dropdown
+        )
+        # ✅ 直接传入 async 函数给 click 事件
+        decompile_btn.click(
+            fn=_decompile,
+            inputs=[func_dropdown, base_url, api_key, model_dropdown, temperature],
+            outputs=[raw_asm_input, asm_input, rodata_request, rodata_parsed, c_output],
+        )
+
+    return demo
+
+
+# ========== 5. 主程序 ==========
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--binary", type=str, default="lib.so", help="Path to ELF binary"
+    )
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=7860)
+    args = parser.parse_args()
+
+    functions, rodata_addr, rodata_data = parse_elf_at_startup(args.binary)
+    demo = create_gradio_app(args.binary, functions, rodata_addr, rodata_data)
+    demo.launch(server_name=args.host, server_port=args.port)
