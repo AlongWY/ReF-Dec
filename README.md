@@ -2,6 +2,9 @@
 
 Code for [ReF Decompile: Relabeling and Function Call Enhanced Decompile](https://arxiv.org/abs/2502.12221)
 
+## Demo
+![DEMO](demo.jpeg)
+
 ## Deploy
 
 ```bash
