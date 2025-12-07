@@ -7,7 +7,8 @@ import struct
 import tempfile
 import time
 from tqdm import tqdm
-from openai import AsyncOpenAI
+import openai
+from openai import AsyncOpenAI, RateLimitError
 from openai.types.chat import ChatCompletion
 import os.path
 import subprocess
@@ -204,25 +205,44 @@ async def read_data(data_type, data_size, rodata, bias):
             else:
                 return list(value)
         except Exception as e:
-            print(data_type, data_size, type_fmt, type_size, parse_size)
-            print(e)
+            print(data_type, data_size, bias)
+            raise e
+
+
+async def simple_chat(client: AsyncOpenAI, model, messages, stream=True, **kwargs):
+    # return messages
+    while True:
+        try:
+            res: ChatCompletion = await client.chat.completions.create(
+                model=model, messages=messages, stream=stream, **kwargs
+            )
+            if stream:
+                raise NotImplementedError
+            else:
+                return res
+        except RateLimitError as e:
+            # print(f"RateLimitError: {e.status_code} {e}")
+            await asyncio.sleep(1)
+        except openai.APITimeoutError as e:
+            print(f"APITimeoutError: {e.status_code} {e}")
+            await asyncio.sleep(1)
+        except openai.APIError as e:
+            print(f"APIErrorr: {e.status_code} {e}")
+            await asyncio.sleep(1)
 
 
 async def model_decompile(
     model="model",
     rodata=None,
     rodata_addr=None,
-    rodata_parsed=None,
     address_mapping=None,
     timeout=9999,
-    max_tokens=1024,
+    max_tokens=8192,
     temperature=0.01,
     stream=False,
     prompt=None,
     messages=None,
     client: AsyncOpenAI = None,
-    index=None,
-    opt_level=None,
     enable_tool=False,
     **chat_params,
 ):
@@ -236,7 +256,9 @@ async def model_decompile(
             }
         ]
 
-    chat_completion_resp: ChatCompletion = await client.chat.completions.create(
+    start_time = time.time()
+    chat_completion_resp: ChatCompletion = await simple_chat(
+        client=client,
         model=model,
         messages=messages,
         timeout=timeout,
@@ -247,7 +269,6 @@ async def model_decompile(
         **chat_params,
     )
 
-    start_time = time.time()
     if chat_completion_resp.choices[0].message.tool_calls:
         tool_calls = chat_completion_resp.choices[0].message.tool_calls
         tool_results = []
@@ -264,8 +285,17 @@ async def model_decompile(
             parsed_data_type = m.group("type")
             parsed_data_size = m.group("size")
 
-            found = address_mapping[data_label]
-            if found and found["addr"] < rodata_addr + len(rodata):
+            if parsed_data_type == "float":
+                parsed_data_type == "f32"
+            elif parsed_data_type == "double":
+                parsed_data_type == "f64"
+
+            found = address_mapping.get(data_label, None)
+            if (
+                found is not None
+                and rodata is not None
+                and found["addr"] < rodata_addr + len(rodata)
+            ):
                 try:
                     addr = found["addr"]
                     if parsed_data_size is not None:
@@ -280,18 +310,31 @@ async def model_decompile(
                     result = await render_rodata(
                         data_label, parsed_data_type, parsed_data_size, value
                     )
-                    tool_results.append(result)
+                    tool_results.append({"tool_call_id": tool.id, "content": result})
                 except Exception as e:
                     import traceback
 
                     traceback.print_exc()
-                    print(data_label, data_type, found, e)
+                    tool_results.append(
+                        {
+                            "tool_call_id": tool.id,
+                            "content": f"Read {data_label} failed!",
+                        }
+                    )
+            else:
+                tool_results.append(
+                    {
+                        "tool_call_id": tool.id,
+                        "content": f"Not Found {data_label}!",
+                    }
+                )
 
         messages.append(chat_completion_resp.choices[0].message.model_dump())
         for item in tool_results:
-            messages.append({"role": "tool", "content": item})
+            messages.append({"role": "tool", **item})
 
-        chat_completion_resp: ChatCompletion = await client.chat.completions.create(
+        chat_completion_resp: ChatCompletion = await simple_chat(
+            client=client,
             model=model,
             messages=messages,
             timeout=timeout,
@@ -321,8 +364,6 @@ async def model_decompile(
     except Exception as e:
         return content
 
-    return content
-
 
 async def run_decompile(
     sem,
@@ -337,7 +378,6 @@ async def run_decompile(
         c_test = item["c_test"]
         rodata = item["rodata_data"]
         rodata_addr = item["rodata_addr"]
-        rodata_parsed = item["rodata_parsed"]
         address_mapping = item["address_mapping"]
         input_asm_prompt = item["asm_labeled"] if with_label else item["asm"]
 
@@ -363,18 +403,14 @@ async def run_decompile(
                     if rodata is not None
                     else None,
                     rodata_addr=rodata_addr,
-                    rodata_parsed=rodata_parsed.get("func0"),
                     address_mapping=address_mapping,
                     messages=messages,
                     temperature=0.0,
-                    index=item["task_id"],
-                    opt_level=item["type"],
                     enable_tool=enable_tool,
                 )
                 flag_compile, flag_run, err_info = await evaluate_func(
                     c_func, c_test, c_func_decompile
                 )
-
         except Exception as e2:
             import traceback
 
@@ -400,7 +436,7 @@ async def run_decompile(
 async def eval_model(
     client,
     data_all,
-    num_semaphore=1024,
+    num_semaphore=32,
     model_name="model",
     model_tag="model",
     output_file="result.jsonl",
@@ -489,14 +525,18 @@ async def main():
     parser.add_argument(
         "--base_url",
         type=str,
-        required=False,
-        default="http://127.0.0.1:8000/v1",
+        required=True
     )
     parser.add_argument(
         "--api_key",
         type=str,
-        required=False,
-        default="None",
+        required=True,
+    )
+    parser.add_argument(
+        "--model-name",
+        type=str,
+        required=True,
+        help="Model Name",
     )
     parser.add_argument(
         "--enable-tool",
@@ -513,14 +553,20 @@ async def main():
 
     args = parser.parse_args()
     client = AsyncOpenAI(base_url=args.base_url, api_key=args.api_key)
-    model_list = await client.models.list()
 
-    model_name = model_list.data[0].id
+    if args.model_name is None:
+        model_list = await client.models.list()
+        model_name = model_list.data[0].id
+    else:
+        model_name = args.model_name
+
     model_tag = model_name.replace("/", "_")
-
     with open("data/decompile-eval-gcc-rodata.json", "r") as f:
         data_all = json.load(f)
-    result_file = os.path.join("results", f"{model_tag}.json")
+    if args.enable_tool and args.with_label:
+        result_file = os.path.join("results", f"{model_tag}.jsonl")
+    else:
+        result_file = os.path.join("results", f"{model_tag}_raw.jsonl")
     os.makedirs(os.path.dirname(result_file), exist_ok=True)
     if not os.path.exists(result_file):
         await eval_model(
@@ -531,8 +577,46 @@ async def main():
             result_file=result_file,
             enable_tool=args.enable_tool,
             with_label=args.with_label,
+            num_semaphore=128,
             output_file=os.path.join("results", "results.jsonl"),
         )
+    else:
+        num_compile = {"O0": 0, "O1": 0, "O2": 0, "O3": 0}
+        num_run = {"O0": 0, "O1": 0, "O2": 0, "O3": 0}
+        with open(result_file) as f:
+            for line in f:
+                try:
+                    result = json.loads(line)
+                    opt_state = result["type"]
+                    num_compile[opt_state] += result["compile"]
+                    num_run[opt_state] += result["run"]
+                except Exception as e:
+                    raise e
+
+        with open(os.path.join("results", "results.jsonl"), "a") as f:
+                total_run = sum(num_run.values())
+                total_run_rate = total_run / len(data_all)
+
+                total_compile = sum(num_compile.values())
+                total_compile_rate = total_compile / len(data_all)
+
+                level_num = len(data_all) // 4
+
+                data = {
+                    "model": model_name,
+                    # rates
+                    "total_run_rate": total_run_rate,
+                    "total_compile_rate": total_compile_rate,
+                    "run_rate": {k: v / level_num for k, v in num_run.items()},
+                    "compile_rate": {k: v / level_num for k, v in num_compile.items()},
+                    # numbers
+                    "total_run": total_run,
+                    "total_compile": total_compile,
+                    "num_run": num_run,
+                    "num_compile": num_compile,
+                }
+
+                f.write(json.dumps(data) + "\n")
 
 
 if __name__ == "__main__":

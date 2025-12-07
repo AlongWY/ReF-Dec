@@ -6,6 +6,14 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "gradio>=5.49.1",
+    "great-tables>=0.20.0",
     "openai>=2.7.1",
+    "polars>=1.35.1",
     "pyelftools>=0.32",
+]
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.10.7",
+    "seaborn>=0.13.2",
 ]

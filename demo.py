@@ -7,8 +7,8 @@ import asyncio
 import subprocess
 import gradio as gr
 from elftools.elf.elffile import ELFFile
-from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
+from openai import AsyncOpenAI, RateLimitError, APITimeoutError
 
 STRUCT_MAPPING = {
     "i8": ("b", 1),
@@ -390,6 +390,24 @@ async def render_rodata(data_label, data_type, data_size, data_value):
     return result
 
 
+async def simple_chat(client: AsyncOpenAI, model, messages, stream=True, **kwargs):
+    # return messages
+    while True:
+        try:
+            res: ChatCompletion = await client.chat.completions.create(
+                model=model, messages=messages, stream=stream, **kwargs
+            )
+            if stream:
+                raise NotImplementedError
+            else:
+                return res
+        except RateLimitError as e:
+            # print(f"RateLimitError: {e.status_code} {e}")
+            await asyncio.sleep(1)
+        except APITimeoutError as e:
+            print(f"APITimeoutError: {e.status_code} {e}")
+            await asyncio.sleep(1)
+
 async def model_decompile(
     # for decompile
     assembly,
@@ -412,21 +430,21 @@ async def model_decompile(
         },
     ]
 
-    chat_completion_resp: ChatCompletion = await client.chat.completions.create(
+    chat_completion_resp: ChatCompletion = await simple_chat(
+        client=client,
         model=model,
         messages=messages,
         timeout=timeout,
         max_tokens=max_tokens,
         temperature=temperature,
-        stream=False,
         tools=TOOLS,
         **chat_params,
     )
 
     rodata_request = None
-    tool_results = []
     if chat_completion_resp.choices[0].message.tool_calls:
         tool_calls = chat_completion_resp.choices[0].message.tool_calls
+        tool_results = []
         for tool in tool_calls:
             function = tool.function
             arguments = json.loads(function.arguments)
@@ -440,8 +458,17 @@ async def model_decompile(
             parsed_data_type = m.group("type")
             parsed_data_size = m.group("size")
 
-            found = address_mapping[data_label]
-            if found and found["addr"] < rodata_addr + len(rodata_data):
+            if parsed_data_type == "float":
+                parsed_data_type == "f32"
+            elif parsed_data_type == "double":
+                parsed_data_type == "f64"
+
+            found = address_mapping.get(data_label, None)
+            if (
+                found is not None
+                and rodata_data is not None
+                and found["addr"] < rodata_addr + len(rodata_data)
+            ):
                 try:
                     addr = found["addr"]
                     if parsed_data_size is not None:
@@ -456,25 +483,36 @@ async def model_decompile(
                     result = await render_rodata(
                         data_label, parsed_data_type, parsed_data_size, value
                     )
-                    tool_results.append(result)
+                    tool_results.append({"tool_call_id": tool.id, "content": result})
                 except Exception as e:
                     import traceback
 
                     traceback.print_exc()
-                    print(data_label, data_type, found, e)
+                    tool_results.append(
+                        {
+                            "tool_call_id": tool.id,
+                            "content": f"Read {data_label} failed!",
+                        }
+                    )
+            else:
+                tool_results.append(
+                    {
+                        "tool_call_id": tool.id,
+                        "content": f"Not Found {data_label}!",
+                    }
+                )
 
-        rodata_request = chat_completion_resp.choices[0].message.model_dump()
         messages.append(chat_completion_resp.choices[0].message.model_dump())
         for item in tool_results:
-            messages.append({"role": "tool", "content": item})
+            messages.append({"role": "tool", **item})
 
-        chat_completion_resp: ChatCompletion = await client.chat.completions.create(
+        chat_completion_resp: ChatCompletion = await simple_chat(
+            client=client,
             model=model,
             messages=messages,
             timeout=timeout,
             max_tokens=max_tokens,
             temperature=temperature,
-            stream=False,
             tools=TOOLS,
             **chat_params,
         )
@@ -655,9 +693,9 @@ def create_gradio_app(binary_path: str, functions, rodata_addr, rodata_data):
 
         with gr.Sidebar():
             base_url = gr.Textbox(
-                value="http://gpu07:8081/v1",
+                value="http://127.0.0.1:8000/v1",
                 label="LLM Base URL",
-                placeholder="e.g., http://localhost:1234/v1",
+                placeholder="e.g., http://localhost:8000/v1",
             )
             api_key = gr.Textbox(label="API Key", type="password", value="None")
             model_dropdown = gr.Dropdown(
